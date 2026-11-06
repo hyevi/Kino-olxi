@@ -38,8 +38,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'source/package-lock.json' # Если его нет, шаг не упадет
+          # Кэширование npm отключено: package-lock.json может отсутствовать,
+          # что приводило к ошибке "Some specified paths were not resolved".
+          # Для надёжности сборки кэш не используется.
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
