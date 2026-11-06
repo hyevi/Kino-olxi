@@ -17,11 +17,14 @@ jobs:
         run: |
           mkdir -p source
           unzip -q .github/source.zip -d source
+          # Выравниваем структуру, если архив содержит папку source внутри
           if [ -d "source/source" ]; then
             shopt -s dotglob
             mv source/source/* source/
             rm -rf source/source
           fi
+          echo "=== Содержимое папки source после распаковки ==="
+          ls -la source/
 
       - name: Guard — проверка на реальный токен
         run: |
@@ -44,12 +47,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK (только platform-tools)
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          # Исключаем устаревший пакет 'tools', из-за которого падал sdkmanager.
-          # 'platform-tools' достаточно для сборки через Gradle.
+          # Устанавливаем только platform-tools, чтобы избежать ошибки с устаревшим 'tools'
           packages: 'platform-tools'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: false
 
       - name: Install dependencies
         working-directory: ./source
@@ -58,22 +65,41 @@ jobs:
       - name: Generate fresh Android project
         working-directory: ./source
         run: |
+          # 1. Удаляем старую папку android, если она случайно попала в архив
           rm -rf android
+          
+          # 2. ГАРАНТИРОВАННО создаем JSON-конфиг. Это решит ошибку "Missing appId".
+          echo '{
+            "appId": "com.olxi.kino",
+            "appName": "Кино Olxi",
+            "webDir": "www"
+          }' > capacitor.config.json
+          
+          # 3. Создаем платформу и синхронизируем
           npx cap add android
           npx cap sync android
+          
+          # 4. Проверяем, что gradlew на месте
+          if [ ! -f "android/gradlew" ]; then
+            echo "❌ Ошибка: npx cap add android не создал файл gradlew!"
+            exit 1
+          fi
 
       - name: Fix line endings and grant permissions
         working-directory: ./source
         run: |
           sudo apt-get install -y dos2unix
+          # Исправляем возможные проблемы с CRLF (если архив собирался на Windows)
           dos2unix android/gradlew || true
+          # Даем права на выполнение
           chmod +x android/gradlew
 
       - name: Build Debug APK
-        working-directory: ./source
+        working-directory: ./source/android
         run: |
-          cd android
-          ./gradlew assembleDebug --no-daemon
+          # Собираем APK с флагом --stacktrace, чтобы в случае падения Gradle 
+          # мы увидели точную причину, а не просто "Exit code 1"
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
