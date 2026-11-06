@@ -10,21 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Unzip source
+      - name: Unzip source code
         run: |
           mkdir -p source
           unzip -q .github/source.zip -d source
-          # если в архиве верхнеуровневая папка source/ — выравниваем
+          # Обработка случая, если архив был создан с верхнеуровневой папкой source/
           if [ -d "source/source" ]; then
             shopt -s dotglob
             mv source/source/* source/
             rm -rf source/source
           fi
 
-      - name: Guard — placeholder вместо токена
+      - name: Guard — проверка на реальный токен
         run: |
           if [ -f source/token.env ] && grep -q "KINOPOISK_API_TOKEN=." source/token.env; then
             if ! grep -q "ВСТАВЬТЕ" source/token.env; then
@@ -37,7 +37,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'source/package-lock.json' # Если его нет, шаг не упадет
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -45,31 +47,40 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install dependencies
         working-directory: ./source
         run: npm install
 
-      - name: Add Android platform (если нет)
+      - name: Generate fresh Android project
         working-directory: ./source
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          # Удаляем старую папку android, если она была в архиве
+          rm -rf android
+          # Создаем проект заново (это гарантирует наличие gradlew и всех файлов)
+          npx cap add android
+          # Синхронизируем веб-файлы с нативным проектом
+          npx cap sync android
 
-      - name: Sync Capacitor
+      - name: Fix line endings and grant permissions
         working-directory: ./source
-        run: npx cap sync android
-
-      - name: Grant gradlew
-        working-directory: ./source/android
-        run: chmod +x gradlew
+        run: |
+          # На всякий случай исправляем окончания строк, если архив собран на Windows
+          sudo apt-get install -y dos2unix
+          dos2unix android/gradlew || true
+          chmod +x android/gradlew
 
       - name: Build Debug APK
-        working-directory: ./source/android
-        run: ./gradlew assembleDebug --no-daemon
+        working-directory: ./source
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: kino-olxi-debug-apk
           path: source/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
